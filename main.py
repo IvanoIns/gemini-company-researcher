@@ -1,5 +1,3 @@
-#search again company with description"Input company name"?
-
 import os
 import time
 import logging
@@ -80,9 +78,10 @@ except ImportError:
 import google.api_core.exceptions
 
 # --- Constants ---
-#gemini-2.5-flash-preview-05-20
-#gemini-2.5-pro-preview-05-06
 #gemini-2.0-flash
+#gemini-2.5-flash
+#gemini-2.5-pro
+
 
 GEMINI_MODEL_NAME = "gemini-2.0-flash"
 CSV_FILE_PATH = r"C:\Users\SESA779789\Desktop\Data\Monthly Data\2025\new_dataset\segments_creation\perplexity_search_results\files_to_run_through_API\companies_to_find_ALL_for_gemini_5_15.csv" # <<< REPLACE THIS
@@ -94,8 +93,7 @@ ASIAN_COMPANY_THRESHOLD = 0.40
 MIN_DESCRIPTION_LENGTH = 50
 MINIMUM_ACCEPTABLE_SCORE_FOR_CLIENT = 0.4
 
-# --- MODIFIED print_section ---
-# This now uses standard print() for console output
+
 def print_section(title):
     section_bar_char = '='
     try:
@@ -114,7 +112,6 @@ def print_section(title):
             f"{Fore.CYAN}{console_formatted_title_str}{Style.RESET_ALL}\n"
             f"{Fore.CYAN}{section_bar_str}{Style.RESET_ALL}"
         )
-        # REVERTED TO STANDARD PRINT for console output
         print(section_output_str)
 
     if logger:
@@ -224,7 +221,7 @@ def gemini_api_call(prompt_content, system_instruction_text, model_name_param=GE
         return None
         
     current_retry_delay_val = RETRY_DELAY
-    # print_info uses standard print now
+   
     print_info(f"Sending request to Gemini API ({model_name_param})... Prompt: {str(prompt_content)[:100]}...")
     logger.info(f"Sending request to Gemini API ({model_name_param}). Prompt: {str(prompt_content)[:100]}...")
     
@@ -258,7 +255,7 @@ def gemini_api_call(prompt_content, system_instruction_text, model_name_param=GE
                 print_success(f"Gemini API call successful (attempt {attempt + 1}).")
                 logger.info(f"Gemini API call successful for prompt: {str(prompt_content)[:100]}")
                 return response_text
-        # ... (rest of your exception handling for gemini_api_call, print_error/print_warning will use standard print) ...
+        
         except google.api_core.exceptions.PermissionDenied as e:
             print_error(f"Gemini API PermissionDenied (Attempt {attempt + 1}/{retries_param + 1}): {e}")
             logger.error(f"Gemini API PermissionDenied: {e} for prompt {str(prompt_content)[:100]}")
@@ -346,35 +343,37 @@ def verify_company_match(text_block_for_verification, original_queried_name, cou
 def get_company_info(company_name, country_name):
     # print_section uses standard print
     print_section(f"RESEARCHING (Gemini {GEMINI_MODEL_NAME}): '{company_name}' ({country_name})")
+    TARGET_INDUSTRY_DESCRIPTION = "your industry"
     safe_company_name_query, _ = sanitize_company_name(company_name)
     system_prompt_for_research = "You are an expert business researcher..." # (Keep your long prompt)
     user_prompt_for_research = (
-        f"The company '{safe_company_name_query}' (Original queried name: '{company_name}') is known to be a user or purchaser of industrial automation components, such as HMIs (Human Machine Interfaces) or IPCs (Industrial PCs).\n"
+        f"The company '{safe_company_name_query}' (Original queried name: '{company_name}') is known to be a user or purchaser of {TARGET_INDUSTRY_DESCRIPTION}.\n"
         f"Your task is to identify and provide detailed information for **this specific business entity** that is headquartered or has its principal operations related to this activity in **{country_name}**.\n\n"
         "CRITICAL FOCUS:\n"
-        "1.  **Identify the Correct Client Entity:** Prioritize the legal entity that matches '{safe_company_name_query}' and is the one that was/is the user/purchaser of industrial automation components within **{country_name}**. Distinguish it from companies with similar names but in unrelated sectors (e.g., pure retail of automotive parts if the client was an electronics manufacturer, financial services unless they are the direct HMI/IPC user for their operational technology).\n"
+        "1.  **Identify the Correct Client Entity:** Prioritize the legal entity that matches '{safe_company_name_query}' and is the one that was/is the user/purchaser of components related to "
+        f"**{TARGET_INDUSTRY_DESCRIPTION}** within **{country_name}**. Distinguish it from companies with similar names but in unrelated sectors.\n"
         "2.  **Country Specificity:** The primary operations and headquarters of the entity you detail MUST be in **{country_name}**.\n"
-        "3.  **Current Operational Status:** If the original client entity was acquired or merged, identify the current operational successor entity in **{country_name}** that would have inherited the role of using/purchasing such automation components. Clearly note this transition in 'Disambiguation Notes'.\n\n"
+        "3.  **Current Operational Status:** If the original client entity was acquired or merged, identify the current operational successor entity in **{country_name}** that would have inherited the relevant role. Clearly note this transition in 'Disambiguation Notes'.\n\n"
         "INSTRUCTIONS FOR OUTPUT:\n"
         "A. IF YOU FIND THE SPECIFIC TARGET CLIENT ENTITY (or its direct successor) IN **{country_name}**:\n"
         "   Present its information in a section starting with '--- ENTITY START ---'.\n"
         "   Provide details using these field labels ON SEPARATE LINES:\n"
-        "      Official Company Name: [Full Legal or commonly used English Name for THIS client entity in **{country_name}**]\n"
-        "      Original Script Name: [Name in original language for THIS client entity in **{country_name}**, if applicable. Else 'N/A'.]\n"
-        "      Headquarters Location: [City, **{country_name}** for THIS client entity.]\n"
-        "      Website: [Official website for THIS client entity.]\n"
-        "      Primary Industry/Sector: [Main industry of THIS client entity, especially as it relates to its use of automation.]\n"
-        "      Detailed Business Activities & Model: [Describe what THIS client entity makes or does in **{country_name}**, focusing on aspects that would involve HMI/IPC usage, e.g., manufacturing processes, system integration, OEM of machinery they build, operational technology they use.]\n"
-        "      Key Products/Services (Categorized): [Main offerings of THIS client entity.]\n"
-        "      Known or Inferred HMI/IPC Relevance: [REQUIRED: Based on your research, confirm or strongly infer HOW this specific entity uses/used HMI/IPC components. For example: 'Uses HMIs for machine control in their automotive electronics manufacturing lines.' or 'Integrates IPCs into the semiconductor equipment they build.' If it's a known client, confirm this aligns with their known use case. If direct confirmation isn't found but their profile strongly suggests it, state the inference.]\n"
-        "      Technology Focus / Key Specializations: [Key technologies relevant to THIS client entity's operations.]\n"
-        "      Target Customer Segments: [Main customer types for THIS client entity.]\n"
-        "      Disambiguation Notes: [Clarify this is the identified client entity (or its successor) in **{country_name}**. Note any name variations from the query if the core entity is correct. If it's a successor, detail the acquisition/merger if known.]\n\n"
-        "B. IF MULTIPLE DISTINCT ENTITIES IN **{country_name}** ARE EXTREMELY STRONG CANDIDATES FOR BEING THE SPECIFIC CLIENT (and it's unclear which is the precise one you're looking for):\n"
-        "   Provide separate '--- ENTITY START ---' sections for each, clearly detailing why each is a plausible candidate as the HMI/IPC-using client matching the query name.\n\n"
-        "C. IF, AFTER THOROUGH SEARCHING, THE SPECIFIC CLIENT ENTITY (or its direct successor) CANNOT BE CLEARLY IDENTIFIED OR CONFIRMED AS AN HMI/IPC USER IN **{country_name}**:\n"
-        "   State: 'TARGET_CLIENT_ENTITY_NOT_CLEARLY_IDENTIFIED_IN_COUNTRY: Unable to definitively identify or confirm '{safe_company_name_query}' in **{country_name}** as the specific HMI/IPC-using client entity based on available information.'\n"
-        "   Optionally, if you found a company with a similar name but in a clearly unrelated industry (like a retail store when expecting a manufacturer), you can briefly note it as 'OTHER_UNRELATED_ENTITY_FOUND: [Name, Location, Brief Reason for exclusion as HMI/IPC client]'.\n\n"
+        "       Official Company Name: [Full Legal or commonly used English Name for THIS client entity in **{country_name}**]\n"
+        "       Original Script Name: [Name in original language for THIS client entity in **{country_name}**, if applicable. Else 'N/A'.]\n"
+        "       Headquarters Location: [City, **{country_name}** for THIS client entity.]\n"
+        "       Website: [Official website for THIS client entity.]\n"
+        "       Primary Industry/Sector: [Main industry of THIS client entity, especially as it relates to its operations.]\n"
+        f"      Detailed Business Activities & Model: [Describe what THIS client entity makes or does in **{country_name}**, focusing on aspects that would involve the **{TARGET_INDUSTRY_DESCRIPTION}**.]\n"
+        "       Key Products/Services (Categorized): [Main offerings of THIS client entity.]\n"
+        f"      Known or Inferred Relevance to Target Industry: [REQUIRED: Based on your research, confirm or strongly infer HOW this specific entity is relevant to **{TARGET_INDUSTRY_DESCRIPTION}**. For example: 'Uses these components for machine control...' or 'Integrates these components into the equipment they build.']\n"
+        "       Technology Focus / Key Specializations: [Key technologies relevant to THIS client entity's operations.]\n"
+        "       Target Customer Segments: [Main customer types for THIS client entity.]\n"
+        "       Disambiguation Notes: [Clarify this is the identified client entity (or its successor) in **{country_name}**. Note any name variations from the query if the core entity is correct. If it's a successor, detail the acquisition/merger if known.]\n\n"
+        "B. IF MULTIPLE DISTINCT ENTITIES IN **{country_name}** ARE EXTREMELY STRONG CANDIDATES FOR BEING THE SPECIFIC CLIENT:\n"
+        "   Provide separate '--- ENTITY START ---' sections for each, clearly detailing why each is a plausible candidate matching the query name and industry relevance.\n\n"
+        "C. IF, AFTER THOROUGH SEARCHING, THE SPECIFIC CLIENT ENTITY (or its direct successor) CANNOT BE CLEARLY IDENTIFIED OR CONFIRMED AS RELEVANT IN **{country_name}**:\n"
+        "   State: 'TARGET_CLIENT_ENTITY_NOT_CLEARLY_IDENTIFIED_IN_COUNTRY: Unable to definitively identify or confirm '{safe_company_name_query}' in **{country_name}** as a relevant entity based on available information.'\n"
+        "   Optionally, if you found a company with a similar name but in a clearly unrelated industry, you can briefly note it as 'OTHER_UNRELATED_ENTITY_FOUND: [Name, Location, Brief Reason for exclusion]'.\n\n"
         "Ensure your entire response adheres to one of these output structures. Do not add conversational text outside these structures."
     )
     llm_full_response = gemini_api_call(user_prompt_for_research, system_prompt_for_research)
@@ -600,9 +599,5 @@ def main():
         logger.warning("Research completed, but no results were generated.")
 
 if __name__ == "__main__":
-    # The check for tqdm.notebook is no longer strictly necessary here
-    # as tqdm.auto handles it. But it doesn't hurt.
-    # if 'tqdm' not in globals() or not hasattr(tqdm, 'notebook'):
-    #     from tqdm import tqdm as basic_tqdm # Fallback, but tqdm.auto should prevent this
-    #     tqdm = basic_tqdm
+
     main()
