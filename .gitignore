@@ -1,0 +1,9 @@
+# Ignore Python's cache
+__pycache__/
+
+# Ignore environment file with secrets
+.env
+
+# Ignore log and output files
+*.log
+*.xlsx
