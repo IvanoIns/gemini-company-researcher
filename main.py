@@ -4,9 +4,9 @@ import logging
 import unicodedata
 import re
 import pandas as pd
-from tqdm.auto import tqdm # MODIFIED: Use tqdm.auto for best environment detection
+from tqdm.auto import tqdm 
 import pycountry
-import regex # Using the `regex` module for Unicode properties
+import regex 
 import colorama
 from colorama import Fore, Style
 from difflib import SequenceMatcher
@@ -81,9 +81,12 @@ import google.api_core.exceptions
 #gemini-2.0-flash
 #gemini-2.5-flash
 #gemini-2.5-pro
-
+#check https://ai.google.dev/gemini-api/docs/models for the models available on free/paid tiers
 
 GEMINI_MODEL_NAME = "gemini-2.0-flash"
+TARGET_INDUSTRY_DESCRIPTION = "industrial automation components, such as HMIs (Human Machine Interfaces) or IPCs (Industrial PCs)"
+RELEVANCE_KEYWORDS = ["uses hmi", "uses ipc", "integrates hmi", "factory automation", "machine control", "manufacturer"]
+
 CSV_FILE_PATH = r"C:\Users\SESA779789\Desktop\Data\Monthly Data\2025\new_dataset\segments_creation\perplexity_search_results\files_to_run_through_API\companies_to_find_ALL_for_gemini_5_15.csv" # <<< REPLACE THIS
 DELAY = 2
 MAX_RETRIES = 2
@@ -143,7 +146,7 @@ PHASE_1_OUTPUT_FIELDS = [
     "Entity_Official_Company_Name", "Entity_Headquarters_Location",
     "Entity_Primary_Industry_Sector", "Entity_Detailed_Business_Activities_Model",
     "Entity_Key_Products_Services_Categorized",
-    "Known or Inferred HMI/IPC Relevance",
+    "Industry_Relevance_Details",
     "Entity_Technology_Focus_Specializations",
     "Entity_Target_Customer_Segments", "Entity_Website",
     "Entity_Disambiguation_Notes", "Entity_Block_Match_Confidence",
@@ -341,11 +344,10 @@ def verify_company_match(text_block_for_verification, original_queried_name, cou
     return combined_confidence >= current_threshold, combined_confidence
 
 def get_company_info(company_name, country_name):
-    # print_section uses standard print
     print_section(f"RESEARCHING (Gemini {GEMINI_MODEL_NAME}): '{company_name}' ({country_name})")
-    TARGET_INDUSTRY_DESCRIPTION = "your industry"
     safe_company_name_query, _ = sanitize_company_name(company_name)
-    system_prompt_for_research = "You are an expert business researcher..." # (Keep your long prompt)
+    system_prompt_for_research = "You are an expert business researcher and analyst. Your primary goal is to provide accurate, structured information about specific business entities based on their role as a user or purchaser within a given industry."
+
     user_prompt_for_research = (
         f"The company '{safe_company_name_query}' (Original queried name: '{company_name}') is known to be a user or purchaser of {TARGET_INDUSTRY_DESCRIPTION}.\n"
         f"Your task is to identify and provide detailed information for **this specific business entity** that is headquartered or has its principal operations related to this activity in **{country_name}**.\n\n"
@@ -376,10 +378,12 @@ def get_company_info(company_name, country_name):
         "   Optionally, if you found a company with a similar name but in a clearly unrelated industry, you can briefly note it as 'OTHER_UNRELATED_ENTITY_FOUND: [Name, Location, Brief Reason for exclusion]'.\n\n"
         "Ensure your entire response adheres to one of these output structures. Do not add conversational text outside these structures."
     )
+
     llm_full_response = gemini_api_call(user_prompt_for_research, system_prompt_for_research)
     if VERBOSE and llm_full_response: print_info(f"\nRaw Gemini Response (first 500 chars):\n{llm_full_response[:500]}\n")
     cleaned_llm_response = clean_llm_response(llm_full_response)
     if VERBOSE and cleaned_llm_response: print_info(f"\nCleaned Gemini Response (first 500 chars for parsing):\n{cleaned_llm_response[:500]}\n")
+
     structured_entities_found_from_llm = []
     if not cleaned_llm_response or "TARGET_CLIENT_ENTITY_NOT_CLEARLY_IDENTIFIED_IN_COUNTRY:" in cleaned_llm_response.upper() or "NO_INFO_FOUND_IN_COUNTRY:" in cleaned_llm_response.upper():
         logger.warning(f"Gemini indicated NO_SPECIFIC_CLIENT_ENTITY or NO_INFO_FOUND for {company_name} in {country_name}.")
@@ -389,12 +393,26 @@ def get_company_info(company_name, country_name):
             print_warning("No '--- ENTITY START ---' separators found, attempting to parse as single entity.")
             entity_text_blocks = [cleaned_llm_response]
         print_info(f"Found {len(entity_text_blocks)} potential entity blocks in Gemini response.")
+
         for i, block_text in enumerate(entity_text_blocks):
             if len(block_text) < MIN_DESCRIPTION_LENGTH: continue
             print_info(f"Processing Entity Block #{i+1}...")
             entity_data = {"Input Company Name Query": company_name, "Input Country Query": country_name, **{f: "Not parsed" for f in PHASE_1_OUTPUT_FIELDS if f not in ["Input Company Name Query", "Input Country Query"]}, "Original_LLM_Response_Block_Snippet": block_text[:5000] + "..." if len(block_text) > 3000 else block_text}
-            if is_asian_company(country_name): entity_data["Original Script Name"] = "Not parsed"
-            parsing_labels_map = { "Official Company Name": "Entity_Official_Company_Name", "Original Script Name": "Original Script Name", "Headquarters Location": "Entity_Headquarters_Location", "Website": "Entity_Website", "Primary Industry/Sector": "Entity_Primary_Industry_Sector", "Detailed Business Activities & Model": "Entity_Detailed_Business_Activities_Model", "Key Products/Services (Categorized)": "Entity_Key_Products_Services_Categorized", "Known or Inferred HMI/IPC Relevance": "Known or Inferred HMI/IPC Relevance", "Technology Focus / Key Specializations": "Entity_Technology_Focus_Specializations", "Target Customer Segments": "Entity_Target_Customer_Segments", "Disambiguation Notes": "Entity_Disambiguation_Notes" }
+            
+            parsing_labels_map = {
+                "Official Company Name": "Entity_Official_Company_Name", 
+                "Original Script Name": "Original Script Name", 
+                "Headquarters Location": "Entity_Headquarters_Location", 
+                "Website": "Entity_Website", 
+                "Primary Industry/Sector": "Entity_Primary_Industry_Sector", 
+                "Detailed Business Activities & Model": "Entity_Detailed_Business_Activities_Model", 
+                "Key Products/Services (Categorized)": "Entity_Key_Products_Services_Categorized", 
+                "Known or Inferred Relevance to Target Industry": "Industry_Relevance_Details",
+                "Technology Focus / Key Specializations": "Entity_Technology_Focus_Specializations", 
+                "Target Customer Segments": "Entity_Target_Customer_Segments", 
+                "Disambiguation Notes": "Entity_Disambiguation_Notes"
+            }
+            
             for label_in_prompt, dict_key_in_entity_data in parsing_labels_map.items():
                 if not is_asian_company(country_name) and label_in_prompt == "Original Script Name": continue
                 other_labels_escaped = [regex.escape(l_prompt) for l_prompt in parsing_labels_map.keys() if l_prompt != label_in_prompt]
@@ -403,36 +421,61 @@ def get_company_info(company_name, country_name):
                 if match:
                     value = match.group(1).strip().replace("[Specify]", "").replace("[Provide detail or 'Not specified']", "").strip()
                     entity_data[dict_key_in_entity_data] = value if value and value.lower() not in ["n/a", "-"] else "Not specified"
+            
             text_for_verification = f"Official Company Name: {entity_data.get('Entity_Official_Company_Name', '')}\nHeadquarters Location: {entity_data.get('Entity_Headquarters_Location', '')}"
             is_block_match, block_confidence = verify_company_match(text_for_verification, company_name, country_name)
             entity_data["Entity_Block_Match_Confidence"] = f"{block_confidence:.2f}"
             entity_data["Entity_Block_Is_Likely_Match"] = "Yes" if is_block_match else "No"
+            
             if entity_data.get("Entity_Official_Company_Name", "Not parsed").lower() not in ["not parsed", "not specified", "target_client_entity_not_clearly_identified_in_country"]:
                 structured_entities_found_from_llm.append(entity_data)
                 print_success(f"Parsed potential entity: '{entity_data['Entity_Official_Company_Name']}' with conf {block_confidence:.2f}")
-            else: print_warning(f"Skipped block #{i+1}: '{entity_data.get('Entity_Official_Company_Name', 'N/A')}' (Not parsed or LLM negative).")
+            else:
+                print_warning(f"Skipped block #{i+1}: '{entity_data.get('Entity_Official_Company_Name', 'N/A')}' (Not parsed or LLM negative).")
+
     final_selected_entity_list = []
     if structured_entities_found_from_llm:
         candidate_entities = []
         for entity_dict in structured_entities_found_from_llm:
-            if "TARGET_CLIENT_ENTITY_NOT_CLEARLY_IDENTIFIED_IN_COUNTRY" in entity_dict.get("Entity_Official_Company_Name", "") or "OTHER_UNRELATED_ENTITY_FOUND" in entity_dict.get("Entity_Disambiguation_Notes", ""): print_warning(f"Post-filter: LLM indicated '{entity_dict.get('Entity_Official_Company_Name')}' not target/irrelevant."); continue
-            if country_name.lower() not in entity_dict.get("Entity_Headquarters_Location", "").lower(): print_warning(f"Post-filter: Skipping '{entity_dict.get('Entity_Official_Company_Name')}' (loc mismatch)."); continue
-            hmi_ipc_relevance_text = entity_dict.get("Known or Inferred HMI/IPC Relevance", "n/a").lower()
-            relevance_score = 0.5 if len(hmi_ipc_relevance_text) > 10 and "not applicable" not in hmi_ipc_relevance_text and "n/a" not in hmi_ipc_relevance_text else 0.0
-            if any(kw in hmi_ipc_relevance_text for kw in ["uses hmi", "uses ipc", "integrates hmi", "factory automation", "machine control"]): relevance_score = 1.0
+            if "TARGET_CLIENT_ENTITY_NOT_CLEARLY_IDENTIFIED_IN_COUNTRY" in entity_dict.get("Entity_Official_Company_Name", "") or "OTHER_UNRELATED_ENTITY_FOUND" in entity_dict.get("Entity_Disambiguation_Notes", ""):
+                print_warning(f"Post-filter: LLM indicated '{entity_dict.get('Entity_Official_Company_Name')}' not target/irrelevant.")
+                continue
+            if country_name.lower() not in entity_dict.get("Entity_Headquarters_Location", "").lower():
+                print_warning(f"Post-filter: Skipping '{entity_dict.get('Entity_Official_Company_Name')}' (loc mismatch).")
+                continue
+            
+            relevance_text = entity_dict.get("Industry_Relevance_Details", "n/a").lower()
+            relevance_score = 0.5 if len(relevance_text) > 10 and "not applicable" not in relevance_text and "n/a" not in relevance_text else 0.0
+            if any(kw in relevance_text for kw in RELEVANCE_KEYWORDS):
+                relevance_score = 1.0
+            
             name_loc_conf = float(entity_dict.get("Entity_Block_Match_Confidence", "0.0"))
-            notes = entity_dict.get("Entity_Disambiguation_Notes", "").lower(); activity_score = 0.9 if "successor to" in notes or ("acquired by" in notes and "current operational entity" in notes) else (0.2 if any(s in notes for s in ["acquired by", "no longer exists", "merged into", "defunct"]) else 1.0)
+            notes = entity_dict.get("Entity_Disambiguation_Notes", "").lower()
+            activity_score = 1.0
+            if "successor to" in notes or ("acquired by" in notes and "current operational entity" in notes):
+                activity_score = 0.9
+            elif any(s in notes for s in ["acquired by", "no longer exists", "merged into", "defunct"]):
+                activity_score = 0.2
+                
             final_score = (name_loc_conf * 0.3) + (relevance_score * 0.5) + (activity_score * 0.2)
-            if "TARGET_CLIENT_ENTITY_NOT_CLEARLY_IDENTIFIED" in entity_dict.get("Entity_Official_Company_Name",""): final_score = 0
-            if final_score > MINIMUM_ACCEPTABLE_SCORE_FOR_CLIENT: candidate_entities.append({"entity_data": entity_dict, "final_score": final_score})
-            else: print_info(f"Post-filter: Entity '{entity_dict.get('Entity_Official_Company_Name')}' rejected. Score: {final_score:.2f}")
+            
+            if "TARGET_CLIENT_ENTITY_NOT_CLEARLY_IDENTIFIED" in entity_dict.get("Entity_Official_Company_Name",""):
+                final_score = 0
+            
+            if final_score > MINIMUM_ACCEPTABLE_SCORE_FOR_CLIENT:
+                candidate_entities.append({"entity_data": entity_dict, "final_score": final_score})
+            else:
+                print_info(f"Post-filter: Entity '{entity_dict.get('Entity_Official_Company_Name')}' rejected. Score: {final_score:.2f}")
+            
         if candidate_entities:
             best_candidate_data = sorted(candidate_entities, key=lambda x: x["final_score"], reverse=True)[0]['entity_data']
             print_success(f"Selected best client entity in {country_name}: '{best_candidate_data['Entity_Official_Company_Name']}' (Score: {sorted(candidate_entities, key=lambda x: x['final_score'], reverse=True)[0]['final_score']:.2f})")
             final_selected_entity_list = [best_candidate_data]
+            
     if not final_selected_entity_list:
         logger.warning(f"No suitable client entity profile identified for '{company_name}' in '{country_name}'.")
-        return [{"Input Company Name Query": company_name, "Input Country Query": country_name, "Entity_Official_Company_Name": "No specific client entity profile identified", "Known or Inferred HMI/IPC Relevance": "N/A", **{field: "Processing failed to identify target client" for field in PHASE_1_OUTPUT_FIELDS if field not in ["Input Company Name Query", "Input Country Query", "Entity_Official_Company_Name", "Known or Inferred HMI/IPC Relevance"]}, "Original_LLM_Response_Block_Snippet": cleaned_llm_response[:5000] if cleaned_llm_response else "No response from LLM.", "Entity_Block_Match_Confidence": "0.00", "Entity_Block_Is_Likely_Match": "No"}]
+        return [{"Input Company Name Query": company_name, "Input Country Query": country_name, "Entity_Official_Company_Name": "No specific client entity profile identified", "Industry_Relevance_Details": "N/A", **{field: "Processing failed to identify target client" for field in PHASE_1_OUTPUT_FIELDS if field not in ["Input Company Name Query", "Input Country Query", "Entity_Official_Company_Name", "Industry_Relevance_Details"]}, "Original_LLM_Response_Block_Snippet": cleaned_llm_response[:5000] if cleaned_llm_response else "No response from LLM.", "Entity_Block_Match_Confidence": "0.00", "Entity_Block_Is_Likely_Match": "No"}]
+        
     return final_selected_entity_list
 
 def save_results(results_list_for_excel, output_file_path, columns_to_write):
